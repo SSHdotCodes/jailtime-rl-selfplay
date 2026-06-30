@@ -110,7 +110,7 @@ providers:
     params:
       device: "cuda"
       dtype: "bfloat16"
-      max_new_tokens: 128
+      max_new_tokens: 512
       temperature: 0.0
       local_files_only: false
       trust_remote_code: false
