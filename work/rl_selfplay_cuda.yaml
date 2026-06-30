@@ -32,7 +32,7 @@
 
 run:
   name: "rl-selfplay-cuda"
-  episodes: 2000
+  episodes: 5000
   output_dir: "./runs/rl-selfplay-cuda"
   seed: 20260629
 
