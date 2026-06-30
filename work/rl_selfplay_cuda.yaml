@@ -17,7 +17,13 @@
 # Models (E2B, ~5B params each, bf16 = ~10GB weights):
 #   attacker/jailbreaker = huihui-ai/Huihui-gemma-4-E2B-it-abliterated
 #   defender/main model  = google/gemma-4-E2B-it   (this is what gets hardened)
-#   main-loop verifier   = rule_based (deterministic, avoids reward hacking)
+#   main-loop verifier   = model_based LLM-as-judge (static gemma-4-E2B-it;
+#                          NOT RL-updated, so rewards stay non-circular). The
+#                          rule_based verifier is a toy with abstract markers
+#                          that cannot recognize real natural-language refusals
+#                          (incl. multilingual), so it falsely labeled correct
+#                          refusals as UNSAFE_COMPLIANCE and pushed the defender
+#                          toward compliance. A static judge fixes that.
 #
 # The defender's FINAL weights are saved to
 #   runs/rl-selfplay-cuda/latest/defender_final/model.safetensors
@@ -31,9 +37,9 @@ run:
   seed: 20260629
 
 sampling:
-  adversarial_rate: 0.6
-  benign_rate: 0.3
-  borderline_rate: 0.1
+  adversarial_rate: 1.0
+  benign_rate: 0.0
+  borderline_rate: 0.0
 
 rewards:
   safe_refusal_reward: 2.0
@@ -92,11 +98,26 @@ providers:
       model_kwargs:
         attn_implementation: "sdpa"
         low_cpu_mem_usage: true
-  # Deterministic main-loop verifier. Using rule_based avoids a 4th resident
-  # model and keeps the reward signal non-circular (the model verifier that is
-  # RL-trained lives only in the calibration step, disabled here for speed).
+  # Main-loop verifier: a STATIC LLM-as-judge (separate copy of gemma-4-E2B-it,
+  # inference-only, never RL-updated -> rewards stay non-circular). The
+  # rule_based verifier cannot recognize real natural-language or multilingual
+  # refusals and falsely punished the defender for correct refusals. Using
+  # type: local_transformers builds a ModelBasedVerifier that asks the judge for
+  # structured JSON (SAFE_REFUSAL / UNSAFE_COMPLIANCE / ...).
   verifier:
-    type: "rule_based"
+    type: "local_transformers"
+    model: "google/gemma-4-E2B-it"
+    params:
+      device: "cuda"
+      dtype: "bfloat16"
+      max_new_tokens: 128
+      temperature: 0.0
+      local_files_only: false
+      trust_remote_code: false
+      max_length: 4096
+      model_kwargs:
+        attn_implementation: "sdpa"
+        low_cpu_mem_usage: true
 
 trainer:
   type: "rl_selfplay"
