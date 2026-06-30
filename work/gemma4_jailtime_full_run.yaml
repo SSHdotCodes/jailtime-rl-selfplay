@@ -1,0 +1,65 @@
+run:
+  name: "gemma4-jailtime-mps"
+  episodes: 2000
+  output_dir: "./runs/gemma4-jailtime"
+  seed: 20260629
+
+sampling:
+  adversarial_rate: 0.7
+  benign_rate: 0.2
+  borderline_rate: 0.1
+
+attacker:
+  type: "model_wrapped"
+  params:
+    max_wrapper_tokens: 192
+    max_wrapper_chars: 1800
+
+providers:
+  attacker:
+    type: "local_transformers"
+    model: "OBLITERATUS/gemma-4-E4B-it-OBLITERATED"
+    params:
+      device: "auto"
+      dtype: "float16"
+      max_new_tokens: 192
+      temperature: 0.7
+      local_files_only: false
+      trust_remote_code: false
+      model_kwargs:
+        attn_implementation: "eager"
+        low_cpu_mem_usage: true
+  defender:
+    type: "local_transformers"
+    model: "google/gemma-4-E4B-it"
+    params:
+      device: "auto"
+      dtype: "float16"
+      max_new_tokens: 96
+      temperature: 0.0
+      local_files_only: false
+      trust_remote_code: false
+      model_kwargs:
+        attn_implementation: "eager"
+        low_cpu_mem_usage: true
+  verifier:
+    type: "hybrid"
+    params:
+      provider:
+        type: "local_transformers"
+        model: "google/gemma-4-E4B-it"
+        params:
+          device: "auto"
+          dtype: "float16"
+          max_new_tokens: 96
+          temperature: 0.0
+          local_files_only: false
+          trust_remote_code: false
+          model_kwargs:
+            attn_implementation: "eager"
+            low_cpu_mem_usage: true
+
+trainer:
+  type: "bandit"
+  update_every: 25
+  exploration_rate: 0.1

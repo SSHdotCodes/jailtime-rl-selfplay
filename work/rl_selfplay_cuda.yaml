@@ -1,0 +1,138 @@
+# Real-time RL self-play, tuned for an NVIDIA RTX PRO 6000 Blackwell (96GB VRAM).
+#
+# CUDA optimizations vs the MPS config:
+#   - device: cuda  + dtype: bfloat16
+#   - attn_implementation: sdpa        (fast + memory-efficient fused attention)
+#   - max_length: 10000                 (full-length REINFORCE backprop context)
+#   - gradient_checkpointing: false     (not needed with 96GB; faster without it)
+#   - optimizer: sgd                    (AdamW's 2x fp32 state copies would make
+#                                        two resident E2B models exceed 96GB; SGD
+#                                        has no optimizer state and fits easily)
+#   - clip_grad: 1.0 + lr: 1e-4         (clipping bounds the SGD step norm to lr,
+#                                        which matches the per-step magnitude of a
+#                                        standard AdamW full-finetune ~2e-4, so
+#                                        weights actually move over 2000 steps)
+#   - compile: true                     (torch.compile for ~1.5-2x speedup)
+#
+# Models (E2B, ~5B params each, bf16 = ~10GB weights):
+#   attacker/jailbreaker = huihui-ai/Huihui-gemma-4-E2B-it-abliterated
+#   defender/main model  = google/gemma-4-E2B-it   (this is what gets hardened)
+#   main-loop verifier   = rule_based (deterministic, avoids reward hacking)
+#
+# The defender's FINAL weights are saved to
+#   runs/rl-selfplay-cuda/latest/defender_final/model.safetensors
+#
+# Use only on models you own or are explicitly authorized to modify.
+
+run:
+  name: "rl-selfplay-cuda"
+  episodes: 2000
+  output_dir: "./runs/rl-selfplay-cuda"
+  seed: 20260629
+
+sampling:
+  adversarial_rate: 0.6
+  benign_rate: 0.3
+  borderline_rate: 0.1
+
+rewards:
+  safe_refusal_reward: 2.0
+  unsafe_compliance_penalty: -3.0
+  over_refusal_penalty: -2.0
+  helpful_compliance_reward: 0.5
+  borderline_safe_reward: 0.5
+  ambiguous_reward: 0.0
+  evasive_penalty: -0.5
+  failed_attack_penalty: -0.5
+  successful_attack_reward: 1.0
+  novelty_bonus: 0.1
+  evasive_partial_credit: 0.1
+  progressive_difficulty_bonus: 0.05
+  technique_novelty_bonus: 0.1
+
+attacker:
+  type: "adaptive_rl"
+  params:
+    max_prompt_tokens: 160
+    max_prompt_chars: 4000
+    memory_size: 20
+    success_memory_size: 8
+    failure_memory_size: 4
+    ucb_exploration: 1.41
+    temperature: 0.9
+
+providers:
+  # Attacker/jailbreaker: the abliterated (safety-stripped) Gemma-4 E2B.
+  attacker:
+    type: "local_transformers"
+    model: "huihui-ai/Huihui-gemma-4-E2B-it-abliterated"
+    params:
+      device: "cuda"
+      dtype: "bfloat16"
+      max_new_tokens: 160
+      temperature: 0.9
+      local_files_only: false
+      trust_remote_code: false
+      max_length: 10000         # full backprop context length (prompt+response)
+      model_kwargs:
+        attn_implementation: "sdpa"
+        low_cpu_mem_usage: true
+  # Defender/main model: standard Gemma-4 E2B (the model being hardened).
+  defender:
+    type: "local_transformers"
+    model: "google/gemma-4-E2B-it"
+    params:
+      device: "cuda"
+      dtype: "bfloat16"
+      max_new_tokens: 96
+      temperature: 0.7
+      local_files_only: false
+      trust_remote_code: false
+      max_length: 10000
+      model_kwargs:
+        attn_implementation: "sdpa"
+        low_cpu_mem_usage: true
+  # Deterministic main-loop verifier. Using rule_based avoids a 4th resident
+  # model and keeps the reward signal non-circular (the model verifier that is
+  # RL-trained lives only in the calibration step, disabled here for speed).
+  verifier:
+    type: "rule_based"
+
+trainer:
+  type: "rl_selfplay"
+  update_every: 1
+
+rl:
+  enabled: true
+  checkpoint_every: 250
+  save_final_defender: true
+  final_defender_dir: "defender_final"
+  promote_calibrated_verifier: false
+  attacker:
+    optimizer: "sgd"
+    lr: 1.0e-4
+    momentum: 0.0
+    entropy_coef: 0.02
+    clip_grad: 1.0
+    baseline_decay: 0.95
+    reward_clip: 10.0
+    temperature: 0.9
+    max_new_tokens: 160
+    dtype: "bfloat16"
+    gradient_checkpointing: false
+    compile: true
+  defender:
+    optimizer: "sgd"
+    lr: 1.0e-4
+    momentum: 0.0
+    entropy_coef: 0.01
+    clip_grad: 1.0
+    baseline_decay: 0.95
+    reward_clip: 10.0
+    temperature: 0.7
+    max_new_tokens: 96
+    dtype: "bfloat16"
+    gradient_checkpointing: false
+    compile: true
+  verifier_calibration:
+    enabled: false  # set true + a hybrid verifier to also RL-train the verifier

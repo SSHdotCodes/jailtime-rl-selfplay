@@ -1,0 +1,139 @@
+# Real-time RL self-play config.
+#
+# Unlike the offline adversarial-dataset / LoRA-SFT workflow, this config drives
+# full-parameter REINFORCE updates on the attacker and defender weights every
+# episode. The defender's final weights are saved as safetensors to
+# runs/rl-selfplay/latest/defender_final.
+#
+# REWARD SEMANTICS (see rewards block):
+#   - Defender safely refuses a real jailbreak  -> +2.0
+#   - Defender gets jailbroken (unsafe compliance) -> -3.0
+#   - Defender over-refuses a safe prompt        -> -2.0
+#   - Defender correctly answers a safe prompt   -> +0.5 (slight)
+#   - Attacker jailbreak succeeds                -> +1.0
+#   - Attacker fails                             -> -0.5
+#
+# The main-loop verifier label comes from the deterministic rule_based verifier
+# to avoid self-referential reward hacking. A separate model verifier is
+# RL-calibrated against a frozen probe set (rl.verifier_calibration) so the
+# verifier also improves, decoupled from the main reward.
+#
+# Use only on models you own or are explicitly authorized to modify.
+
+run:
+  name: "rl-selfplay-run"
+  episodes: 200
+  output_dir: "./runs/rl-selfplay"
+  seed: 20260629
+
+sampling:
+  adversarial_rate: 0.6
+  benign_rate: 0.3
+  borderline_rate: 0.1
+
+rewards:
+  safe_refusal_reward: 2.0
+  unsafe_compliance_penalty: -3.0
+  over_refusal_penalty: -2.0
+  helpful_compliance_reward: 0.5
+  borderline_safe_reward: 0.5
+  ambiguous_reward: 0.0
+  evasive_penalty: -0.5
+  failed_attack_penalty: -0.5
+  successful_attack_reward: 1.0
+  novelty_bonus: 0.1
+  evasive_partial_credit: 0.1
+  progressive_difficulty_bonus: 0.05
+  technique_novelty_bonus: 0.1
+
+attacker:
+  type: "adaptive_rl"
+  params:
+    max_prompt_tokens: 160
+    max_prompt_chars: 4000
+    memory_size: 20
+    success_memory_size: 8
+    failure_memory_size: 4
+    ucb_exploration: 1.41
+    temperature: 0.9
+
+providers:
+  attacker:
+    type: "local_transformers"
+    model: "OBLITERATUS/gemma-4-E4B-it-OBLITERATED"
+    params:
+      device: "auto"
+      dtype: "float32"
+      max_new_tokens: 160
+      temperature: 0.9
+      local_files_only: false
+      trust_remote_code: false
+      model_kwargs:
+        attn_implementation: "eager"
+        low_cpu_mem_usage: true
+  defender:
+    type: "local_transformers"
+    model: "google/gemma-4-E4B-it"
+    params:
+      device: "auto"
+      dtype: "float32"
+      max_new_tokens: 96
+      temperature: 0.7
+      local_files_only: false
+      trust_remote_code: false
+      max_length: 1024
+      model_kwargs:
+        attn_implementation: "eager"
+        low_cpu_mem_usage: true
+  verifier:
+    type: "hybrid"
+    params:
+      provider:
+        type: "local_transformers"
+        model: "google/gemma-4-E4B-it"
+        params:
+          device: "auto"
+          dtype: "float32"
+          max_new_tokens: 96
+          temperature: 0.0
+          local_files_only: false
+          trust_remote_code: false
+          model_kwargs:
+            attn_implementation: "eager"
+            low_cpu_mem_usage: true
+
+trainer:
+  type: "rl_selfplay"
+  update_every: 1
+
+rl:
+  enabled: true
+  checkpoint_every: 100
+  save_final_defender: true
+  final_defender_dir: "defender_final"
+  promote_calibrated_verifier: false
+  attacker:
+    lr: 5.0e-7
+    entropy_coef: 0.02
+    clip_grad: 1.0
+    baseline_decay: 0.95
+    reward_clip: 10.0
+    temperature: 0.9
+    max_new_tokens: 160
+    dtype: "float32"
+  defender:
+    lr: 5.0e-7
+    entropy_coef: 0.01
+    clip_grad: 1.0
+    baseline_decay: 0.95
+    reward_clip: 10.0
+    temperature: 0.7
+    max_new_tokens: 96
+    dtype: "float32"
+  verifier_calibration:
+    enabled: true
+    every: 50
+    lr: 5.0e-7
+    entropy_coef: 0.005
+    correct_reward: 1.0
+    incorrect_penalty: -1.0

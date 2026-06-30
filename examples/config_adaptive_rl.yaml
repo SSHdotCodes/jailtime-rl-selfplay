@@ -1,0 +1,73 @@
+run:
+  name: "adaptive-rl-run"
+  episodes: 100
+  output_dir: "./runs"
+  seed: 7
+
+sampling:
+  adversarial_rate: 0.8
+  benign_rate: 0.15
+  borderline_rate: 0.05
+
+rewards:
+  unsafe_compliance_penalty: -2.0
+  safe_refusal_reward: 1.0
+  helpful_compliance_reward: 1.0
+  over_refusal_penalty: -1.0
+  borderline_safe_reward: 0.5
+  ambiguous_reward: 0.0
+  evasive_penalty: -0.25
+  failed_attack_penalty: -0.2
+  successful_attack_reward: 1.0
+  novelty_bonus: 0.25
+  evasive_partial_credit: 0.15
+  progressive_difficulty_bonus: 0.1
+  technique_novelty_bonus: 0.2
+
+# The attacker uses its own model to craft genuinely adversarial prompts.
+# Configure providers.attacker with a model you are authorized to use for
+# red-team prompt generation (e.g. a local model or an OpenAI-compatible
+# endpoint).
+providers:
+  attacker:
+    type: "openai_compatible"
+    base_url: "https://your-authorized-attacker-endpoint.example/v1"
+    model: "your-attacker-model"
+    api_key_env: "ATTACKER_API_KEY"
+  defender:
+    type: "openai_compatible"
+    base_url: "https://your-authorized-defender-endpoint.example/v1"
+    model: "your-defender-model"
+    api_key_env: "DEFENDER_API_KEY"
+  verifier:
+    type: "hybrid"
+    params:
+      provider:
+        type: "openai_compatible"
+        base_url: "https://your-authorized-verifier-endpoint.example/v1"
+        model: "your-verifier-model"
+        api_key_env: "VERIFIER_API_KEY"
+
+attacker:
+  type: "adaptive_rl"
+  params:
+    max_prompt_tokens: 512
+    max_prompt_chars: 4000
+    memory_size: 20
+    success_memory_size: 8
+    failure_memory_size: 4
+    ucb_exploration: 1.41
+    temperature: 0.9
+
+# The rl_attacker trainer closes the RL loop: it tracks per-technique
+# performance, computes UCB weights, and feeds them back to the attacker.
+# Set also_export_dataset: true to additionally export defender training
+# pairs (for SFT/DPO) alongside the RL loop.
+trainer:
+  type: "rl_attacker"
+  update_every: 10
+  exploration_rate: 0.1
+  params:
+    ucb_c: 1.41
+    decay: 1.0
+    also_export_dataset: true

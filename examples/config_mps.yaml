@@ -1,0 +1,28 @@
+run:
+  name: "mps-local-run"
+  episodes: 25
+  output_dir: "./runs"
+  seed: 7
+
+sampling:
+  adversarial_rate: 0.5
+  benign_rate: 0.4
+  borderline_rate: 0.1
+
+providers:
+  defender:
+    type: "local_transformers"
+    model: "path-or-huggingface-model-id"
+    params:
+      device: "auto"          # auto prefers mps on Apple Silicon, then cuda, then cpu
+      dtype: "auto"
+      max_new_tokens: 192
+      temperature: 0.0
+      local_files_only: true  # set false only when you intentionally allow model download
+  verifier:
+    type: "rule_based"
+
+trainer:
+  type: "bandit"
+  update_every: 10
+
